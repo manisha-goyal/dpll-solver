@@ -234,6 +234,107 @@ class CNFConverter:
         else:
             return [self.collect_literals(node)]
    
+class DPLLSolver:
+    def __init__(self):
+        self.negation = '!'
+
+    def get_clauses_from_ast(self, node):
+        clauses = []
+
+        def traverse(node):
+            if isinstance(node, Atom) or (isinstance(node, Not) and isinstance(node.expr, Atom)):
+                return [[str(node)]]
+            elif isinstance(node, Not):
+                return [[str(node)] + traverse(node.expr)]
+            elif isinstance(node, Or):
+                combined_clauses = []
+                left_clauses = traverse(node.left)
+                right_clauses = traverse(node.right)
+                for l_clause in left_clauses:
+                    for r_clause in right_clauses:
+                        combined_clauses.append(l_clause + r_clause)
+                return combined_clauses
+            elif isinstance(node, And):
+                clauses.extend(traverse(node.left))
+                clauses.extend(traverse(node.right))
+                return []
+
+        traverse(node)
+        return [set(clause) for clause in clauses if clause]
+
+    def find_easy_case(self, clauses):
+        all_literals = {literal for clause in clauses for literal in clause}
+        # Pure literal check
+        for literal in sorted(all_literals):
+            if literal.startswith(self.negation):
+                if literal[1:] not in all_literals:
+                    print(f"Easy case: {literal.strip(self.negation)} is a pure literal")
+                    return literal
+            else:
+                if self.negation + literal not in all_literals:
+                    print(f"Easy case: {literal.strip(self.negation)} is a pure literal")
+                    return literal
+        # Unit clause check
+        for clause in clauses:
+            if len(clause) == 1:
+                literal = next(iter(clause))
+                print(f"Easy case: {literal.strip(self.negation)} is a unit literal")
+                return literal
+        return None
+
+    def remove_and_simplify(self, clauses, symbol_to_rm):
+        updated_clauses = []
+        for clause in clauses:
+            if symbol_to_rm in clause:
+                continue  # Clause is satisfied
+            # Remove the negated symbol if present
+            new_clause = clause - {self.negation + symbol_to_rm.strip(self.negation)}
+            if new_clause:
+                updated_clauses.append(new_clause)
+        for clause in updated_clauses:
+            c = []
+            for symbol in clause:
+                c.append(symbol)
+            print(" ".join(c))
+        return updated_clauses
+    
+    def recursive_dpll(self, all_symbols, clauses, assignments):
+        symbol = self.find_easy_case(clauses)
+        while symbol:
+            is_negated = symbol.startswith(self.negation)
+            #symbol = symbol.strip(self.negation)
+            assignments[symbol.strip(self.negation)] = not is_negated
+            clauses = self.remove_and_simplify(clauses, symbol)
+            symbol = self.find_easy_case(clauses)
+
+        if not clauses:
+            if not any(clause for clause in clauses if clause):  # If all clauses are satisfied
+                for symbol in all_symbols:
+                    if symbol not in assignments:
+                        print(f"Unbounded: {symbol} = False")
+                        assignments[symbol.strip(self.negation)] = False
+                return True, assignments
+            return False, {}  # Unsat
+
+        # Hard case with smallest lexicographic ordering
+        all_symbols = sorted({lit.strip(self.negation) for cls in clauses for lit in cls})
+        for symbol in all_symbols:
+            if symbol not in assignments:  # Unassigned symbol
+                for value in [True, False]:
+                    print(f"Hard case, guess: {symbol.strip(self.negation)} = {value}")
+                    new_assignments = assignments.copy()
+                    new_assignments[symbol.strip(self.negation)] = value
+                    new_clauses = self.remove_and_simplify(clauses, symbol if value else self.negation + symbol)
+                    success, result_assignments = self.recursive_dpll(all_symbols, new_clauses, new_assignments)
+                    if success:
+                        return True, result_assignments
+                break  # If both guesses failed, backtrack
+        return False, {}
+    
+    def dpll(self, clauses, assignments={}):
+        all_symbols = {literal.strip(self.negation) for clause in clauses for literal in clause}
+        return self.recursive_dpll(all_symbols, clauses, assignments)
+
 def read_expression_from_file(file_name):
     tokens = []
     with open(file_name) as in_file:
@@ -244,7 +345,7 @@ def read_expression_from_file(file_name):
             tokens.append(f"({l.strip()})")
     return " & ".join(tokens)
 
-def tokenize(expression):
+def tokenize_cnf(expression):
     operator_re = re.compile(r"(<=>|=>|!|&|\||\(|\)|\[|\]|\{|\})")
     identifier_re = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*")
 
@@ -273,6 +374,39 @@ def tokenize(expression):
 
     return tokens
 
+def tokenize_dpll(expression):
+    tokens = []
+    i = 0
+    while i < len(expression):
+        char = expression[i]
+
+        if char in ['!', '&', '(', ')']:
+            tokens.append(char)
+            i += 1
+            continue
+
+        elif char.isalnum() or char == '_':
+            start = i
+            while i < len(expression) and (expression[i].isalnum() or expression[i] == '_'):
+                i += 1
+            tokens.append(expression[start:i])
+
+            next_char_index = i
+            while next_char_index < len(expression) and expression[next_char_index] == ' ':
+                next_char_index += 1
+            if next_char_index < len(expression) and expression[next_char_index] not in [')', '&']:
+                tokens.append('|')
+            continue
+
+        elif char == ' ':
+            i += 1
+            continue
+
+        else:
+            raise Exception(f"ERROR: Token Error '{char}' is not a valid token.")
+        
+    return tokens
+
 if __name__ == "__main__":
     try:
         parser = argparse.ArgumentParser(description="DPLL solver for BNF and CNF sentences.")
@@ -285,12 +419,15 @@ if __name__ == "__main__":
         mode = args.mode
         expression = read_expression_from_file(args.input_file)
         
-        tokens = tokenize(expression)
+        if mode == 'dpll':
+            tokens = tokenize_dpll(expression)
+        else:
+            tokens = tokenize_cnf(expression)
 
         parser = Parser(tokens)
         root = parser.parse()
         cnf_converter = CNFConverter(root)
-
+        
         if mode in ['cnf', 'solver']:
             cnf_converter.convert_to_cnf()
             if mode == 'cnf':
@@ -298,10 +435,18 @@ if __name__ == "__main__":
                 cnf_converter.print_cnf_clauses() 
                 print()
         if mode in ['solver', 'dpll']:
+            solver = DPLLSolver()
             if not cnf_converter.is_cnf(root):
                 raise Exception("ERROR: input file is not in CNF")
-            print("\nSolution:\n")
-            #dpll_solver(root)
+            cnf_converter.print_cnf_clauses() 
+            clauses = solver.get_clauses_from_ast(root)
+            success, assignments = solver.dpll(clauses)
+            if success:
+                print("\nSolution:")
+                for var, val in assignments.items():
+                    print(f"{var}={val}")
+            else:
+                print("NO SOLUTION")
     except Exception as e:
         print(f"{e}", file=sys.stderr)
         sys.exit(1)
