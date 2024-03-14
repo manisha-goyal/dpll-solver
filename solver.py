@@ -56,14 +56,14 @@ class Parser:
         if self.current_token == token_value:
             self.advance()
         else:
-            raise Exception(f"Expected token '{token_value}', but found '{self.current_token}'")
+            raise Exception(f"Expected token '{token_value}', but found '{self.current_token}', mismatched parentheses or input not in BNF")
 
     def parse(self):
         if self.current_token == '':
             return None
         result = self.expression()
         if self.current_token != '':
-            raise Exception("Unexpected end of input: possibly due to unmatched opening parentheses or extraneous input.")
+            raise Exception("Unexpected end of input, mismatched parentheses or input not in BNF")
         return result
 
     def expression(self):
@@ -284,7 +284,6 @@ class DPLLSolver:
 
     def simplify_sentences(self, clauses, symbol_to_rm):
         updated_clauses = []
-        
         for clause in clauses:
             if symbol_to_rm in clause:
                 continue
@@ -294,33 +293,30 @@ class DPLLSolver:
                 new_clause = clause - {self.negation + symbol_to_rm}
             if new_clause:
                 updated_clauses.append(new_clause)
-        
         if self.verbose:
             for clause in updated_clauses:
                 c = []
                 for symbol in clause:
                     c.append(symbol)
                 print(" ".join(c))
-        
         return updated_clauses
     
     def recursive_dpll(self, all_symbols, clauses, assignments):
         symbol = self.find_easy_case(clauses)
         while symbol:
             is_negated = symbol.startswith(self.negation)
-            #symbol = symbol.strip(self.negation)
             assignments[symbol.strip(self.negation)] = not is_negated
             clauses = self.simplify_sentences(clauses, symbol)
             symbol = self.find_easy_case(clauses)
 
         if not clauses:
-            if not any(clause for clause in clauses if clause):  # If all clauses are satisfied
+            if not any(clause for clause in clauses if clause):
                 for symbol in all_symbols:
                     if symbol not in assignments:
                         self.print_verbose(f"Unbounded: {symbol} = False")
                         assignments[symbol.strip(self.negation)] = False
                 return True, assignments
-            return False, {}  # Unsat
+            return False, {}
 
         for symbol in all_symbols:
             if symbol not in assignments:
@@ -332,10 +328,10 @@ class DPLLSolver:
                     success, result_assignments = self.recursive_dpll(all_symbols, new_clauses, new_assignments)
                     if success:
                         return True, result_assignments
-                break  # If both guesses failed, backtrack
+                break
         return False, {}
     
-    def dpll(self, clauses, assignments={}):
+    def solve_dpll(self, clauses, assignments={}):
         all_symbols = sorted({literal.strip(self.negation) for clause in clauses for literal in clause})
         return self.recursive_dpll(all_symbols, clauses, assignments)
     
@@ -343,77 +339,67 @@ class DPLLSolver:
         if verbose:
             print(message)
 
-def get_input_from_file(file_name):
-    tokens = []
-    with open(file_name) as in_file:
-        for line in in_file.readlines():
-            if line == '\n':
+class InputProcessor:
+
+    def get_input_from_file(self, file_name):
+        tokens = []
+        with open(file_name) as in_file:
+            for line in in_file.readlines():
+                if line == '\n':
+                    continue
+                l = line
+                tokens.append(f"({l.strip()})")
+        return " & ".join(tokens)
+
+    def tokenize_cnf(self, expression):
+        operator_re = re.compile(r"(<=>|=>|!|&|\||\(|\)|\[|\]|\{|\})")
+        identifier_re = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*")
+        tokens = []
+        i = 0
+        while i < len(expression):
+            char = expression[i]
+            op_match = operator_re.match(expression[i:])
+            if op_match:
+                tokens.append(op_match.group())
+                i += len(op_match.group()) 
                 continue
-            l = line
-            tokens.append(f"({l.strip()})")
-    return " & ".join(tokens)
-
-def tokenize_cnf(expression):
-    operator_re = re.compile(r"(<=>|=>|!|&|\||\(|\)|\[|\]|\{|\})")
-    identifier_re = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*")
-
-    tokens = []
-    i = 0
-    while i < len(expression):
-        char = expression[i]
-
-        op_match = operator_re.match(expression[i:])
-        if op_match:
-            tokens.append(op_match.group())
-            i += len(op_match.group()) 
-            continue
-
-        id_match = identifier_re.match(expression[i:])
-        if id_match:
-            tokens.append(id_match.group())
-            i += len(id_match.group())
-            continue
-
-        if char in ' \n':
-            i += 1
-            continue
-
-        raise Exception(f"ERROR: Token Error '{char}' is not a valid token.")
-
-    return tokens
-
-def tokenize_dpll(expression):
-    tokens = []
-    i = 0
-    while i < len(expression):
-        char = expression[i]
-
-        if char in ['!', '&', '(', ')']:
-            tokens.append(char)
-            i += 1
-            continue
-
-        elif char.isalnum() or char == '_':
-            start = i
-            while i < len(expression) and (expression[i].isalnum() or expression[i] == '_'):
+            id_match = identifier_re.match(expression[i:])
+            if id_match:
+                tokens.append(id_match.group())
+                i += len(id_match.group())
+                continue
+            if char in ' \n':
                 i += 1
-            tokens.append(expression[start:i])
+                continue
+            raise Exception(f"ERROR: Token Error '{char}' is not a valid token, input file is not in BNF")
+        return tokens
 
-            next_char_index = i
-            while next_char_index < len(expression) and expression[next_char_index] == ' ':
-                next_char_index += 1
-            if next_char_index < len(expression) and expression[next_char_index] not in [')', '&']:
-                tokens.append('|')
-            continue
-
-        elif char == ' ':
-            i += 1
-            continue
-
-        else:
-            raise Exception(f"ERROR: Token Error '{char}' is not a valid token.")
-        
-    return tokens
+    def tokenize_dpll(self, expression):
+        tokens = []
+        i = 0
+        while i < len(expression):
+            char = expression[i]
+            if char in ['!', '&', '(', ')']:
+                tokens.append(char)
+                i += 1
+                continue
+            elif char.isalnum() or char == '_':
+                start = i
+                while i < len(expression) and (expression[i].isalnum() or expression[i] == '_'):
+                    i += 1
+                tokens.append(expression[start:i])
+                next_char_index = i
+                while next_char_index < len(expression) and expression[next_char_index] == ' ':
+                    next_char_index += 1
+                if next_char_index < len(expression) and expression[next_char_index] not in [')', '&']:
+                    tokens.append('|')
+                continue
+            elif char == ' ':
+                i += 1
+                continue
+            else:
+                raise Exception(f"ERROR: Token Error '{char}' is not a valid token, input file is not in CNF")
+        return tokens
 
 if __name__ == "__main__":
     try:
@@ -423,14 +409,14 @@ if __name__ == "__main__":
         parser.add_argument("input_file", help="Path to the input file with CNF or BNF sentences")
         args = parser.parse_args()
         
+        input_Processor = InputProcessor()
         verbose = args.v
         mode = args.mode
-        expression = get_input_from_file(args.input_file)
-        
+        expression = input_Processor.get_input_from_file(args.input_file)
         if mode == 'dpll':
-            tokens = tokenize_dpll(expression)
+            tokens = input_Processor.tokenize_dpll(expression)
         else:
-            tokens = tokenize_cnf(expression)
+            tokens = input_Processor.tokenize_cnf(expression)
 
         parser = Parser(tokens)
         root = parser.parse()
@@ -441,17 +427,17 @@ if __name__ == "__main__":
             if mode == 'cnf':
                 print("CNF:")
                 cnf_converter.print_cnf_clauses() 
-                print()
+
         if mode in ['solver', 'dpll']:
             solver = DPLLSolver(verbose)
             if not cnf_converter.is_cnf(root):
                 raise Exception("ERROR: input file is not in CNF")
             cnf_converter.print_cnf_clauses() 
             clauses = solver.extract_clauses(root)
-            success, assignments = solver.dpll(clauses)
+            success, assignments = solver.solve_dpll(clauses)
             if success:
-                print("\nSolution:")
-                for var, val in assignments.items():
+                print("Solution:")
+                for var, val in sorted(assignments.items()):
                     print(f"{var}={val}")
             else:
                 print("NO SOLUTION")
