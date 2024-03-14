@@ -132,28 +132,28 @@ class CNFConverter:
     def __init__(self, root):
         self.root = root
 
-    def remove_equivalences(self, node):
+    def remove_iff(self, node):
         if isinstance(node, Iff):
-            node.left = self.remove_equivalences(node.left)
-            node.right = self.remove_equivalences(node.right)
+            node.left = self.remove_iff(node.left)
+            node.right = self.remove_iff(node.right)
             return And(Implies(node.left, node.right), Implies(node.right, node.left))
         elif isinstance(node, (And, Or)):
-            node.left = self.remove_equivalences(node.left)
-            node.right = self.remove_equivalences(node.right)
+            node.left = self.remove_iff(node.left)
+            node.right = self.remove_iff(node.right)
         elif isinstance(node, Not):
-            node.expr = self.remove_equivalences(node.expr)
+            node.expr = self.remove_iff(node.expr)
         elif isinstance(node, Atom):
             return node
         return node
 
-    def remove_implications(self, node):
+    def remove_implies(self, node):
         if isinstance(node, Implies):
-            return Or(Not(self.remove_implications(node.left)), self.remove_implications(node.right))
+            return Or(Not(self.remove_implies(node.left)), self.remove_implies(node.right))
         elif isinstance(node, (And, Or)):
-            node.left = self.remove_implications(node.left)
-            node.right = self.remove_implications(node.right)
+            node.left = self.remove_implies(node.left)
+            node.right = self.remove_implies(node.right)
         elif isinstance(node, Not):
-            node.expr = self.remove_implications(node.expr)
+            node.expr = self.remove_implies(node.expr)
         elif isinstance(node, Atom):
             return node
         return node
@@ -204,9 +204,9 @@ class CNFConverter:
             return self.is_cnf(node.left) and self.is_cnf(node.right)
         return True
 
-    def convert_to_cnf(self):
-        self.root = self.remove_equivalences(self.root)
-        self.root = self.remove_implications(self.root)
+    def bnf_to_cnf(self):
+        self.root = self.remove_iff(self.root)
+        self.root = self.remove_implies(self.root)
         self.root = self.to_negation_normal_form(self.root)
         while not self.is_cnf(self.root):
             self.root = self.distribution(self.root)
@@ -235,10 +235,11 @@ class CNFConverter:
             return [self.collect_literals(node)]
    
 class DPLLSolver:
-    def __init__(self):
+    def __init__(self, verbose):
         self.negation = '!'
+        self.verbose = verbose
 
-    def get_clauses_from_ast(self, node):
+    def extract_clauses(self, node):
         clauses = []
 
         def traverse(node):
@@ -264,38 +265,43 @@ class DPLLSolver:
 
     def find_easy_case(self, clauses):
         all_literals = {literal for clause in clauses for literal in clause}
-        # Pure literal check
         for literal in sorted(all_literals):
             if literal.startswith(self.negation):
                 if literal[1:] not in all_literals:
-                    print(f"Easy case: {literal.strip(self.negation)} is a pure literal")
+                    self.print_verbose(f"Easy case: {literal.strip(self.negation)} = False")
                     return literal
             else:
                 if self.negation + literal not in all_literals:
-                    print(f"Easy case: {literal.strip(self.negation)} is a pure literal")
+                    self.print_verbose(f"Easy case: {literal.strip(self.negation)} = True")
                     return literal
-        # Unit clause check
         for clause in clauses:
             if len(clause) == 1:
                 literal = next(iter(clause))
-                print(f"Easy case: {literal.strip(self.negation)} is a unit literal")
+                value = False if literal.startswith(self.negation) else True
+                self.print_verbose(f"Easy case: {literal.strip(self.negation)} = {value}")
                 return literal
         return None
 
-    def remove_and_simplify(self, clauses, symbol_to_rm):
+    def simplify_sentences(self, clauses, symbol_to_rm):
         updated_clauses = []
+        
         for clause in clauses:
             if symbol_to_rm in clause:
-                continue  # Clause is satisfied
-            # Remove the negated symbol if present
-            new_clause = clause - {self.negation + symbol_to_rm.strip(self.negation)}
+                continue
+            if symbol_to_rm.startswith(self.negation):
+                new_clause = clause - {symbol_to_rm.strip(self.negation)}
+            else:
+                new_clause = clause - {self.negation + symbol_to_rm}
             if new_clause:
                 updated_clauses.append(new_clause)
-        for clause in updated_clauses:
-            c = []
-            for symbol in clause:
-                c.append(symbol)
-            print(" ".join(c))
+        
+        if self.verbose:
+            for clause in updated_clauses:
+                c = []
+                for symbol in clause:
+                    c.append(symbol)
+                print(" ".join(c))
+        
         return updated_clauses
     
     def recursive_dpll(self, all_symbols, clauses, assignments):
@@ -304,27 +310,25 @@ class DPLLSolver:
             is_negated = symbol.startswith(self.negation)
             #symbol = symbol.strip(self.negation)
             assignments[symbol.strip(self.negation)] = not is_negated
-            clauses = self.remove_and_simplify(clauses, symbol)
+            clauses = self.simplify_sentences(clauses, symbol)
             symbol = self.find_easy_case(clauses)
 
         if not clauses:
             if not any(clause for clause in clauses if clause):  # If all clauses are satisfied
                 for symbol in all_symbols:
                     if symbol not in assignments:
-                        print(f"Unbounded: {symbol} = False")
+                        self.print_verbose(f"Unbounded: {symbol} = False")
                         assignments[symbol.strip(self.negation)] = False
                 return True, assignments
             return False, {}  # Unsat
 
-        # Hard case with smallest lexicographic ordering
-        all_symbols = sorted({lit.strip(self.negation) for cls in clauses for lit in cls})
         for symbol in all_symbols:
-            if symbol not in assignments:  # Unassigned symbol
+            if symbol not in assignments:
                 for value in [True, False]:
-                    print(f"Hard case, guess: {symbol.strip(self.negation)} = {value}")
+                    self.print_verbose(f"Hard case, guess: {symbol.strip(self.negation)} = {value}")
                     new_assignments = assignments.copy()
                     new_assignments[symbol.strip(self.negation)] = value
-                    new_clauses = self.remove_and_simplify(clauses, symbol if value else self.negation + symbol)
+                    new_clauses = self.simplify_sentences(clauses, symbol if value else self.negation + symbol)
                     success, result_assignments = self.recursive_dpll(all_symbols, new_clauses, new_assignments)
                     if success:
                         return True, result_assignments
@@ -332,10 +336,14 @@ class DPLLSolver:
         return False, {}
     
     def dpll(self, clauses, assignments={}):
-        all_symbols = {literal.strip(self.negation) for clause in clauses for literal in clause}
+        all_symbols = sorted({literal.strip(self.negation) for clause in clauses for literal in clause})
         return self.recursive_dpll(all_symbols, clauses, assignments)
+    
+    def print_verbose(self, message):
+        if verbose:
+            print(message)
 
-def read_expression_from_file(file_name):
+def get_input_from_file(file_name):
     tokens = []
     with open(file_name) as in_file:
         for line in in_file.readlines():
@@ -417,7 +425,7 @@ if __name__ == "__main__":
         
         verbose = args.v
         mode = args.mode
-        expression = read_expression_from_file(args.input_file)
+        expression = get_input_from_file(args.input_file)
         
         if mode == 'dpll':
             tokens = tokenize_dpll(expression)
@@ -429,17 +437,17 @@ if __name__ == "__main__":
         cnf_converter = CNFConverter(root)
         
         if mode in ['cnf', 'solver']:
-            cnf_converter.convert_to_cnf()
+            cnf_converter.bnf_to_cnf()
             if mode == 'cnf':
                 print("CNF:")
                 cnf_converter.print_cnf_clauses() 
                 print()
         if mode in ['solver', 'dpll']:
-            solver = DPLLSolver()
+            solver = DPLLSolver(verbose)
             if not cnf_converter.is_cnf(root):
                 raise Exception("ERROR: input file is not in CNF")
             cnf_converter.print_cnf_clauses() 
-            clauses = solver.get_clauses_from_ast(root)
+            clauses = solver.extract_clauses(root)
             success, assignments = solver.dpll(clauses)
             if success:
                 print("\nSolution:")
