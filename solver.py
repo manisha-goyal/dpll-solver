@@ -278,7 +278,7 @@ class DPLLSolver:
                     print(" ".join(clause))
         return updated_clauses
     
-    def recursive_dpll(self, all_literals, clauses, solution):
+    def recursive_dpll(self, all_symbols, clauses, solution):
         easy_case = self.find_easy_case(clauses)
         while easy_case:
             symbol = easy_case.strip(self.negation)
@@ -294,31 +294,31 @@ class DPLLSolver:
         if not clauses:
             if not any(clause for clause in clauses if clause):
                 self.print_verbose("")
-                for literal in all_literals:
-                    if literal not in solution:
-                        self.print_verbose(f"Unbounded: {literal} = False")
-                        solution[literal] = False
+                for symbol in all_symbols:
+                    if symbol not in solution:
+                        self.print_verbose(f"Unbounded: {symbol} = False")
+                        solution[symbol] = False
                 return True, solution
             return False, {}
 
-        for literal in all_literals:
-            if literal not in solution:
+        for symbol in all_symbols:
+            if symbol not in solution:
                 for value in [True, False]:
-                    self.print_verbose(f"\nHard case, guess: {literal} = {value}")
+                    self.print_verbose(f"\nHard case, guess: {symbol} = {value}")
                     new_solution = solution.copy()
-                    new_solution[literal] = value
-                    new_clauses = self.simplify_sentences(clauses, literal if value else self.negation + literal)
-                    success, result = self.recursive_dpll(all_literals, new_clauses, new_solution)
+                    new_solution[symbol] = value
+                    new_clauses = self.simplify_sentences(clauses, symbol if value else self.negation + symbol)
+                    success, result = self.recursive_dpll(all_symbols, new_clauses, new_solution)
                     if success:
                         return True, result
                     else:
-                        self.print_verbose(f"Fail hard case: {literal} = {value}, backtracking ")
+                        self.print_verbose(f"Fail hard case: {symbol} = {value}, backtracking ")
                 break
         return False, {}
     
     def solve_dpll(self, clauses, solution={}):
-        all_literals = sorted({literal.strip(self.negation) for clause in clauses for literal in clause})
-        return self.recursive_dpll(all_literals, clauses, solution)
+        all_symbols = sorted({literal.strip(self.negation) for clause in clauses for literal in clause})
+        return self.recursive_dpll(all_symbols, clauses, solution)
     
     def print_verbose(self, message):
         if verbose:
