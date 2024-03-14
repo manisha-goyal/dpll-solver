@@ -212,33 +212,6 @@ class CNFConverter:
             self.root = self.distribution(self.root)
         return self.root
 
-    def print_cnf_clauses(self, node=None):
-        if node is None:
-            node = self.root
-        clauses = self.collect_clauses(node)
-        for clause in clauses:
-            print(" ".join(clause))
-
-    def collect_literals(self, node):
-        if isinstance(node, Or):
-            return self.collect_literals(node.left) + self.collect_literals(node.right)
-        elif isinstance(node, Not):
-            return [f"!{node.expr.name}"]
-        elif isinstance(node, Atom):
-            return [node.name]
-        return []
-
-    def collect_clauses(self, node):
-        if isinstance(node, And):
-            return self.collect_clauses(node.left) + self.collect_clauses(node.right)
-        else:
-            return [self.collect_literals(node)]
-   
-class DPLLSolver:
-    def __init__(self, verbose):
-        self.negation = '!'
-        self.verbose = verbose
-
     def extract_clauses(self, node):
         clauses = []
 
@@ -262,6 +235,11 @@ class DPLLSolver:
 
         traverse(node)
         return [set(clause) for clause in clauses if clause]
+   
+class DPLLSolver:
+    def __init__(self, verbose):
+        self.negation = '!'
+        self.verbose = verbose
 
     def find_easy_case(self, clauses):
         all_literals = {literal for clause in clauses for literal in clause}
@@ -295,17 +273,8 @@ class DPLLSolver:
         if self.verbose:
             for clause in updated_clauses:
                 if len(clause) > 0:
-                    c = []
-                    for symbol in clause:
-                        c.append(symbol)
-                    print(" ".join(c))
+                    print(" ".join(clause))
         return updated_clauses
-    
-    def is_contradiction(self, clauses):
-        for clause in clauses:
-            if len(clause) == 0:
-                return True
-        return False
     
     def recursive_dpll(self, all_symbols, clauses, assignments):
         symbol = self.find_easy_case(clauses)
@@ -313,9 +282,10 @@ class DPLLSolver:
             is_negated = symbol.startswith(self.negation)
             assignments[symbol.strip(self.negation)] = not is_negated
             clauses = self.simplify_sentences(clauses, symbol)
-            if self.is_contradiction(clauses):
-                self.print_verbose(f"\nContradiction: {symbol}")
-                return False, {}
+            for clause in clauses:
+                if len(clause) == 0:
+                    self.print_verbose(f"\nContradiction: {symbol.strip(self.negation)}")
+                    return False, {}
             symbol = self.find_easy_case(clauses)
 
         if not clauses:
@@ -417,8 +387,8 @@ if __name__ == "__main__":
     try:
         parser = argparse.ArgumentParser(description="DPLL solver for BNF and CNF sentences.")
         parser.add_argument("-v", action="store_true", required=False, help="Enable verbose output for the DPLL solver.")
-        parser.add_argument("-mode", choices=["cnf", "dpll", "solver"], required=True, help="Mode of the solver: cnf, dpll, solver")
-        parser.add_argument("input_file", help="Path to the input file with CNF or BNF sentences")
+        parser.add_argument("-mode", choices=["cnf", "dpll", "solver"], required=True, help="Mode of the solver: cnf, dpll, solver.")
+        parser.add_argument("input_file", help="Path to the input file with CNF or BNF sentences.")
         args = parser.parse_args()
         
         input_Processor = InputProcessor()
@@ -437,18 +407,21 @@ if __name__ == "__main__":
         if mode in ['cnf', 'solver']:
             cnf_converter.bnf_to_cnf()
             if mode == 'cnf':
-                print("\nCNF sentences:")
-                cnf_converter.print_cnf_clauses() 
+                clauses = cnf_converter.extract_clauses(root)
+                print("CNF sentences:")
+                for clause in clauses:
+                    print(" ".join(clause))
 
         if mode in ['solver', 'dpll']:
             solver = DPLLSolver(verbose)
             if not cnf_converter.is_cnf(root):
                 raise Exception("ERROR: input file is not in CNF")
-            cnf_converter.print_cnf_clauses() 
-            clauses = solver.extract_clauses(root)
+            clauses = cnf_converter.extract_clauses(root)
+            for clause in clauses:
+                print(" ".join(clause))
             success, assignments = solver.solve_dpll(clauses)
             if success:
-                print("\nSolution:")
+                print("Solution:")
                 for var, val in sorted(assignments.items()):
                     print(f"{var}={val}")
             else:
