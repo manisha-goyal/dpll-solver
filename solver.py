@@ -212,7 +212,7 @@ class CNFConverter:
             self.root = self.distribution(self.root)
         return self.root
 
-    def extract_clauses(self, node):
+    def get_clauses(self, node):
         clauses = []
 
         def traverse(node):
@@ -242,33 +242,35 @@ class DPLLSolver:
         self.verbose = verbose
 
     def find_easy_case(self, clauses):
-        all_literals = {literal for clause in clauses for literal in clause}
-        for literal in sorted(all_literals):
+        curr_literals = {literal for clause in clauses for literal in clause}
+        for literal in sorted(curr_literals):
+            symbol = literal.strip(self.negation)
             if literal.startswith(self.negation):
-                if literal[1:] not in all_literals:
-                    self.print_verbose(f"\nEasy case: {literal.strip(self.negation)} = False")
+                if literal[1:] not in curr_literals:
+                    self.print_verbose(f"\nEasy case: {symbol} = False")
                     return literal
             else:
-                if self.negation + literal not in all_literals:
-                    self.print_verbose(f"\nEasy case: {literal.strip(self.negation)} = True")
+                if self.negation + literal not in curr_literals:
+                    self.print_verbose(f"\nEasy case: {symbol} = True")
                     return literal
         for clause in clauses:
             if len(clause) == 1:
                 literal = next(iter(clause))
+                symbol = literal.strip(self.negation)
                 value = False if literal.startswith(self.negation) else True
-                self.print_verbose(f"\nEasy case: {literal.strip(self.negation)} = {value}")
+                self.print_verbose(f"\nEasy case: {symbol} = {value}")
                 return literal
         return None
 
-    def simplify_sentences(self, clauses, symbol_to_rm):
+    def simplify_sentences(self, clauses, remove_literal):
         updated_clauses = []
         for clause in clauses:
-            if symbol_to_rm in clause:
+            if remove_literal in clause:
                 continue
-            if symbol_to_rm.startswith(self.negation):
-                new_clause = clause - {symbol_to_rm.strip(self.negation)}
+            if remove_literal.startswith(self.negation):
+                new_clause = clause - {remove_literal.strip(self.negation)}
             else:
-                new_clause = clause - {self.negation + symbol_to_rm}
+                new_clause = clause - {self.negation + remove_literal}
             updated_clauses.append(new_clause)
         if self.verbose:
             for clause in updated_clauses:
@@ -276,46 +278,47 @@ class DPLLSolver:
                     print(" ".join(clause))
         return updated_clauses
     
-    def recursive_dpll(self, all_symbols, clauses, assignments):
-        symbol = self.find_easy_case(clauses)
-        while symbol:
-            is_negated = symbol.startswith(self.negation)
-            assignments[symbol.strip(self.negation)] = not is_negated
-            clauses = self.simplify_sentences(clauses, symbol)
+    def recursive_dpll(self, all_literals, clauses, solution):
+        easy_case = self.find_easy_case(clauses)
+        while easy_case:
+            symbol = easy_case.strip(self.negation)
+            is_negated = easy_case.startswith(self.negation)
+            solution[symbol] = not is_negated
+            clauses = self.simplify_sentences(clauses, easy_case)
             for clause in clauses:
                 if len(clause) == 0:
-                    self.print_verbose(f"\nContradiction: {symbol.strip(self.negation)}")
+                    self.print_verbose(f"\nContradiction: {symbol}")
                     return False, {}
-            symbol = self.find_easy_case(clauses)
+            easy_case = self.find_easy_case(clauses)
 
         if not clauses:
             if not any(clause for clause in clauses if clause):
                 self.print_verbose("")
-                for symbol in all_symbols:
-                    if symbol not in assignments:
-                        self.print_verbose(f"Unbounded: {symbol} = False")
-                        assignments[symbol.strip(self.negation)] = False
-                return True, assignments
+                for literal in all_literals:
+                    if literal not in solution:
+                        self.print_verbose(f"Unbounded: {literal} = False")
+                        solution[literal] = False
+                return True, solution
             return False, {}
 
-        for symbol in all_symbols:
-            if symbol not in assignments:
+        for literal in all_literals:
+            if literal not in solution:
                 for value in [True, False]:
-                    self.print_verbose(f"\nHard case, guess: {symbol.strip(self.negation)} = {value}")
-                    new_assignments = assignments.copy()
-                    new_assignments[symbol.strip(self.negation)] = value
-                    new_clauses = self.simplify_sentences(clauses, symbol if value else self.negation + symbol)
-                    success, result_assignments = self.recursive_dpll(all_symbols, new_clauses, new_assignments)
+                    self.print_verbose(f"\nHard case, guess: {literal} = {value}")
+                    new_solution = solution.copy()
+                    new_solution[literal] = value
+                    new_clauses = self.simplify_sentences(clauses, literal if value else self.negation + literal)
+                    success, result = self.recursive_dpll(all_literals, new_clauses, new_solution)
                     if success:
-                        return True, result_assignments
+                        return True, result
                     else:
-                        self.print_verbose(f"Fail hard case: {symbol.strip(self.negation)} = {value}, backtracking ")
+                        self.print_verbose(f"Fail hard case: {literal} = {value}, backtracking ")
                 break
         return False, {}
     
-    def solve_dpll(self, clauses, assignments={}):
-        all_symbols = sorted({literal.strip(self.negation) for clause in clauses for literal in clause})
-        return self.recursive_dpll(all_symbols, clauses, assignments)
+    def solve_dpll(self, clauses, solution={}):
+        all_literals = sorted({literal.strip(self.negation) for clause in clauses for literal in clause})
+        return self.recursive_dpll(all_literals, clauses, solution)
     
     def print_verbose(self, message):
         if verbose:
@@ -395,11 +398,7 @@ if __name__ == "__main__":
         verbose = args.v
         mode = args.mode
         expression = input_Processor.get_input_from_file(args.input_file)
-        if mode == 'dpll':
-            tokens = input_Processor.tokenize_dpll(expression)
-        else:
-            tokens = input_Processor.tokenize_cnf(expression)
-
+        tokens = input_Processor.tokenize_dpll(expression) if mode == 'dpll' else input_Processor.tokenize_cnf(expression)
         parser = Parser(tokens)
         root = parser.parse()
         cnf_converter = CNFConverter(root)
@@ -407,25 +406,26 @@ if __name__ == "__main__":
         if mode in ['cnf', 'solver']:
             cnf_converter.bnf_to_cnf()
             if mode == 'cnf':
-                clauses = cnf_converter.extract_clauses(root)
+                clauses = cnf_converter.get_clauses(root)
                 print("CNF sentences:")
                 for clause in clauses:
                     print(" ".join(clause))
 
         if mode in ['solver', 'dpll']:
-            solver = DPLLSolver(verbose)
+            dpll_solver = DPLLSolver(verbose)
             if not cnf_converter.is_cnf(root):
                 raise Exception("ERROR: input file is not in CNF")
-            clauses = cnf_converter.extract_clauses(root)
+            clauses = cnf_converter.get_clauses(root)
             for clause in clauses:
                 print(" ".join(clause))
-            success, assignments = solver.solve_dpll(clauses)
+            success, solution = dpll_solver.solve_dpll(clauses)
             if success:
                 print("Solution:")
-                for var, val in sorted(assignments.items()):
+                for var, val in sorted(solution.items()):
                     print(f"{var}={val}")
             else:
                 print("\nNO SOLUTION")
+
     except Exception as e:
-        print(f"{e}", file=sys.stderr)
+        print(f"{e}")
         sys.exit(1)
