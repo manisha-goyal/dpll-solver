@@ -2,15 +2,6 @@ import argparse
 import sys
 import re
 
-bic, imp, neg, con, dis = "<=>", "=>", "!", "&", "|"
-symbol = re.compile(r"([a-zA-Z0-9_]+)")  # Updated to include underscore in the pattern
-operator = re.compile(f"<=>|=>|!|&|\\|")
-left_brackets = re.compile(r"\(|\[|\{")
-right_brackets = re.compile(r"\)|\]|\}")
-brackets = re.compile(r"\(|\[|\{|\)|\]|\}")
-verbose = False
-mode = None
-
 class Node:
     pass
 
@@ -95,17 +86,17 @@ class Parser:
     def or_expression(self):
         node = self.and_expression()
         while self.current_token == '|':
-            self.advance()  # Move past the '|' operator
-            right = self.and_expression()  # Parse the right-hand operand
-            node = Or(node, right)  # Combine into an Or node
+            self.advance()
+            right = self.and_expression()
+            node = Or(node, right)
         return node
 
     def and_expression(self):
         node = self.not_expression()
         while self.current_token == '&':
-            self.advance()  # Move past the '&' operator
-            right = self.not_expression()  # Parse the right-hand operand
-            node = And(node, right)  # Combine into an And node
+            self.advance()
+            right = self.not_expression()
+            node = And(node, right)
         return node
 
     def not_expression(self):
@@ -122,7 +113,17 @@ class Parser:
             node = self.expression()
             self.eat(')')
             return node
-        else:  # Assume any token not recognized as an operator or parenthesis is an atom
+        elif self.current_token == '{':
+            self.advance()
+            node = self.expression()
+            self.eat('}')
+            return node
+        elif self.current_token == '[':
+            self.advance()
+            node = self.expression()
+            self.eat(']')
+            return node
+        else:
             atom_name = self.current_token
             self.advance()
             return Atom(atom_name)
@@ -133,11 +134,9 @@ class CNFConverter:
 
     def remove_equivalences(self, node):
         if isinstance(node, Iff):
-            left_to_right = Implies(node.left, node.right)
-            right_to_left = Implies(node.right, node.left)
-            transformed_left_to_right = self.remove_implications(left_to_right)
-            transformed_right_to_left = self.remove_implications(right_to_left)
-            return And(transformed_left_to_right, transformed_right_to_left)
+            node.left = self.remove_equivalences(node.left)
+            node.right = self.remove_equivalences(node.right)
+            return And(Implies(node.left, node.right), Implies(node.right, node.left))
         elif isinstance(node, (And, Or)):
             node.left = self.remove_equivalences(node.left)
             node.right = self.remove_equivalences(node.right)
@@ -245,35 +244,34 @@ def read_expression_from_file(file_name):
             tokens.append(f"({l.strip()})")
     return " & ".join(tokens)
 
-def tokenize(tokens):
-    _tokens = []
+def tokenize(expression):
+    operator_re = re.compile(r"(<=>|=>|!|&|\||\(|\)|\[|\]|\{|\})")
+    identifier_re = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*")
+
+    tokens = []
     i = 0
-    while i < len(tokens):
-        char = tokens[i]
-        if i + 2 < len(tokens) and tokens[i:i+3] == '<=>':
-            _tokens.append(bic)
-            i += 3
-        elif i + 1 < len(tokens) and tokens[i:i+2] == '=>':
-            _tokens.append(imp)
-            i += 2
-        elif operator.match(char):
-            _tokens.append(char)
-            i += 1
-        elif brackets.match(char):
-            _tokens.append(char)
-        elif char.isalnum() or char == '_': 
-            start = i
-            while i < len(tokens) and (tokens[i].isalnum() or tokens[i] == '_'):
-                i += 1
-            _tokens.append(tokens[start:i])
+    while i < len(expression):
+        char = expression[i]
+
+        op_match = operator_re.match(expression[i:])
+        if op_match:
+            tokens.append(op_match.group())
+            i += len(op_match.group()) 
             continue
-        elif char in [' ', '\n']:
+
+        id_match = identifier_re.match(expression[i:])
+        if id_match:
+            tokens.append(id_match.group())
+            i += len(id_match.group())
+            continue
+
+        if char in ' \n':
             i += 1
             continue
-        else:
-            raise Exception(f"ERROR: Token Error '{char}' is not a valid token.")
-        i += 1
-    return _tokens
+
+        raise Exception(f"ERROR: Token Error '{char}' is not a valid token.")
+
+    return tokens
 
 if __name__ == "__main__":
     try:
@@ -307,4 +305,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"{e}", file=sys.stderr)
         sys.exit(1)
-        
