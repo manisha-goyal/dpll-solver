@@ -1,8 +1,8 @@
-# CNF Conversion and DPLL Solver Lab
+# CNF Conversion and DPLL Solver
 
 ## Overview
 
-This lab focuses on implementing a logic solver that includes converting sentences from BNF (Backus-Naur Form) to CNF (Conjunctive Normal Form) and solving them using the DPLL (Davis-Putnam-Logemann-Loveland) algorithm.
+This project focuses on implementing a logic solver that includes converting sentences from BNF (Backus-Naur Form) to CNF (Conjunctive Normal Form) and solving them using the DPLL (Davis-Putnam-Logemann-Loveland) algorithm.
 
 ## Features
 
